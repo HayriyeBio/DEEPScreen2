@@ -21,6 +21,7 @@ import argparse
 import multiprocessing
 import csv
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+import chemprop
 
 warnings.filterwarnings(action='ignore')
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
@@ -238,10 +239,10 @@ def get_act_inact_list_for_all_targets(fl):
     return act_inact_dict
 
 
-def create_act_inact_files_for_all_targets(fl, chembl_version, act_threshold=10.0, inact_threshold=20.0):
+def create_act_inact_files_for_targets(fl, target_id, chembl_version, pchembl_threshold=6, target_prediction_dataset_path=None):
     pre_filt_chembl_df = pd.read_csv(fl, sep=",", index_col=False)
-    act_rows_df = pre_filt_chembl_df[pre_filt_chembl_df["value"] >= 6]
-    inact_rows_df = pre_filt_chembl_df[pre_filt_chembl_df["value"] < 6]
+    act_rows_df = pre_filt_chembl_df[pre_filt_chembl_df["pchembl_value"] >= pchembl_threshold]
+    inact_rows_df = pre_filt_chembl_df[pre_filt_chembl_df["pchembl_value"] < pchembl_threshold]
     target_act_inact_comp_dict = dict()
 
     for ind, row in act_rows_df.iterrows():
@@ -263,8 +264,8 @@ def create_act_inact_files_for_all_targets(fl, chembl_version, act_threshold=10.
             target_act_inact_comp_dict[chembl_tid] = [set(), set()]
             target_act_inact_comp_dict[chembl_tid][1].add(chembl_cid)
 
-    act_inact_comp_fl = open("{}/{}_preprocessed_filtered_act_inact_comps_{}_{}.tsv".format(training_files_path, chembl_version, act_threshold, inact_threshold), "w")
-    act_inact_count_fl = open("{}/{}_preprocessed_filtered_act_inact_count_{}_{}.tsv".format(training_files_path, chembl_version, act_threshold, inact_threshold), "w")
+    act_inact_comp_fl = open("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path,target_id, chembl_version,  pchembl_threshold), "w")
+    act_inact_count_fl = open("{}/{}/{}_preprocessed_filtered_act_inact_count_pchembl_{}.tsv".format(target_prediction_dataset_path, target_id, chembl_version, pchembl_threshold), "w")
 
     for targ in target_act_inact_comp_dict:
         str_act = "{}_act\t".format(targ) + ",".join(target_act_inact_comp_dict[targ][0])
@@ -355,19 +356,19 @@ def create_act_inact_files_similarity_based_neg_enrichment_threshold(act_inact_f
     act_inact_count_fl.close()
     act_inact_comp_fl.close()
 
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,targetid,target_prediction_dataset_path, pchembl_threshold=6):
 
-
-def create_final_randomized_training_val_test_sets(neg_act_inact_fl, smiles_inchi_fl,max_cores,targetid,target_prediction_dataset_path):
-
-    chemblid_smiles_dict = get_chemblid_smiles_inchi_dict(smiles_inchi_fl) # bu 2552 len e sahip
+    chemblid_smiles_dict = get_chemblid_smiles_inchi_dict(activity_data) 
     
-    create_act_inact_files_for_all_targets(neg_act_inact_fl, "chembl27") # sıkıntı bunda
+    create_act_inact_files_for_targets(activity_data, targetid, "chembl", pchembl_threshold, target_prediction_dataset_path) 
 
-    act_inact_dict = get_act_inact_list_for_all_targets("{}/chembl27_preprocessed_filtered_act_inact_comps_10.0_20.0.tsv".format(training_files_path))
+    act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, "chembl", pchembl_threshold))
     
     for tar in act_inact_dict:
         
-        os.makedirs(os.path.join(training_files_path, "target_training_datasets", tar, "imgs"))
+        target_img_path = os.path.join(target_prediction_dataset_path, tar, "imgs")
+        if not os.path.exists(target_img_path):
+            os.makedirs(target_img_path)
         act_list, inact_list = act_inact_dict[tar]
         print("len act :" + str(len(act_list)))
         print("len inact :" + str(len(inact_list)))
@@ -415,7 +416,7 @@ def create_final_randomized_training_val_test_sets(neg_act_inact_fl, smiles_inch
 
         file_name = "smilesfile.csv"
         last_smiles_file = os.path.join(directory, file_name)
-
+        print(last_smiles_file)
         with open(last_smiles_file, mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(["canonical_smiles", "molecule_chembl_id", "act_inact_id","test_val_train"])
@@ -451,30 +452,85 @@ def create_final_randomized_training_val_test_sets(neg_act_inact_fl, smiles_inch
                 writer = csv.writer(file)
                 writer.writerow([chemblid_smiles_dict[comp_id][3], comp_id, "0","test"])
 
-        parser.add_argument('--dataset_file', type=str, default="{}/smilesfile.csv".format(directory), help='Path to the dataset file')
-        parser.add_argument('--max_cores', type=int, default = max_cores, help='Maximum number of cores to use')
+        #parser.add_argument('--dataset_file', type=str, default="{}/smilesfile.csv".format(directory), help='Path to the dataset file')
+        #parser.add_argument('--max_cores', type=int, default = max_cores, help='Maximum number of cores to use')
 
-        args = parser.parse_args()
+        #args = parser.parse_args()
 
-        if args.max_cores > multiprocessing.cpu_count():
+        if max_cores > multiprocessing.cpu_count():
             print(f"Warning: Maximum number of cores is {multiprocessing.cpu_count()}. Using maximum available cores.")
-            args.max_cores = multiprocessing.cpu_count()
+            max_cores = multiprocessing.cpu_count()
 
-        smiles_file = args.dataset_file
+        smiles_file = last_smiles_file
         
         initialize_dirs(targetid , target_prediction_dataset_path)
 
         
 
-        generate_images(smiles_file , targetid , args.max_cores , tar_train_val_test_dict,target_prediction_dataset_path)
-    
+        generate_images(smiles_file , targetid , max_cores , tar_train_val_test_dict,target_prediction_dataset_path)
+        print(tar_train_val_test_dict)
         random.shuffle(tar_train_val_test_dict["training"])
         random.shuffle(tar_train_val_test_dict["validation"])
         random.shuffle(tar_train_val_test_dict["test"])
 
-        with open(os.path.join(training_files_path, "target_training_datasets", tar, 'train_val_test_dict.json'), 'w') as fp:
+        with open(os.path.join(target_prediction_dataset_path, tar, 'train_val_test_dict.json'), 'w') as fp:
             json.dump(tar_train_val_test_dict, fp)
        
+def train_val_test_split(smiles_file, target_column_number=1, scaffold_split=False):
+    """
+    Split data into train/val/test sets using either random or scaffold-based splitting
+    
+    Args:
+        smiles_file: Path to CSV file containing SMILES and target data
+        target_column_number: Column index for target values (default=1) 
+        scaffold_split: Whether to use scaffold-based splitting (default=False)
+    
+    Returns:
+        Lists of compound IDs for train/val/test splits
+    """
+    df = pd.read_csv(smiles_file)
+    df.sample(frac=1, random_state=42).reset_index(drop=True)  # Shuffle with fixed seed
+    
+    # Get SMILES and compound IDs
+    smiles = df["canonical_smiles"].tolist()
+    compound_ids = df["molecule_chembl_id"].tolist()
+    
+    if scaffold_split:
+        # Create MoleculeDatapoints for scaffold splitting
+        molecule_list = []
+        for i, smile in enumerate(smiles):
+            molecule_list.append(chemprop.data.data.MoleculeDatapoint(
+                smiles=[smile],
+                targets=[1], # Dummy target since we just need structure
+                id=compound_ids[i]
+            ))
+        molecule_dataset = chemprop.data.data.MoleculeDataset(molecule_list)
+        
+        # Perform scaffold split
+        train, val, test = chemprop.data.scaffold.scaffold_split(
+            data=molecule_dataset,
+            sizes=(0.8, 0.1, 0.1),
+            seed=42,
+            balanced=True
+        )
+        
+        # Extract compound IDs from split datasets
+        train_ids = [mol.id[0] for mol in train]
+        val_ids = [mol.id[0] for mol in val] 
+        test_ids = [mol.id[0] for mol in test]
+        
+    else:
+        # Random split
+        n = len(compound_ids)
+        train_size = int(0.8 * n)
+        val_size = int(0.1 * n)
+        
+        train_ids = compound_ids[:train_size]
+        val_ids = compound_ids[train_size:train_size + val_size]
+        test_ids = compound_ids[train_size + val_size:]
+
+    return train_ids, val_ids, test_ids
+
 
 class DEEPScreenDataset(Dataset):
     def __init__(self, target_id, train_val_test):
